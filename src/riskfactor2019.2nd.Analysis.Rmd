@@ -1,0 +1,1033 @@
+---
+title: "TB Sero-prevalence and Associations 2019"
+author: "Hans Vernooij"
+date: "27-11-2019"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+cat("\nRun date:", format(Sys.Date(), "%d %b %Y"))
+```
+
+## PhD-project Taweepoke Angkawanish
+
+
+# New approach for analysis of TB - cross sectional data
+
+1. Demographics
+2. correlation between tests
+3. LCA model to predict TB-state based on 4 tests (excluding EC-test)
+4. Cross tables per variable with predicted TB-state (LCA) 
+5. Univariable logistic regression for predicted TB-state (positive vs. not positive)
+6. Multivariable logistic regression for predicted TB-state (positive vs. not positive)
+7. Reciever Operation Curves to obtain cutoff values per test (pos vs. not pos and neg vs. not neg)
+   - cutoff for ESAT6, CFP10 and MPB83 based on LCA-state based on 3 tests excluding test itself
+   - cutoff for EC based on LCA-state based on 4 tests (see step 3)
+8. Density of the test results
+9. Spatial distribution of elephants
+
+
+
+```{r ReadData, echo=FALSE}
+crosssection803_20100813_2016May18 <- read.delim("../GISdata/crosssection803_20100813_2016May18.txt")
+
+# exclude longitudinal samples
+attach(crosssection803_20100813_2016May18)
+cat("=== Variable names ===")
+names(crosssection803_20100813_2016May18)
+cat("=== Number of records in initial data:", nrow(crosssection803_20100813_2016May18))
+cat("\n === Select only cross sectional elephants with job=2 (tourists) ===")
+
+cross_sectional <- crosssection803_20100813_2016May18[data.cate=="CS"&job==2,]
+cat("=== Number of records data after selection:", nrow(cross_sectional))
+detach(crosssection803_20100813_2016May18)
+
+#cross_sectional <- cross_sectional[,c(1:20)]
+# coding variables as factors
+for (i in c(12, 20)) {
+  cross_sectional[,i] <- factor(cross_sectional[,i])
+}
+rm(i)
+cross_sectional$AgeCat <- cut(cross_sectional$age.y., c(0, 3, 10, 50, 60, 100))
+
+#
+#names(cross_sectional)
+
+cat("\n === Simple summary per variable of cross-sectional data on elephants working in tourist industry ===\n")
+summary(cross_sectional)
+```
+
+# Demographics of the elephants and summary of tests
+
+```{r summary, echo=FALSE}
+attach(cross_sectional)
+#cat("\nNumber of sampled elephants from same camp")
+freq.of.sampsize <- table(campandnamecate)
+#cat("\nFrequency of sample size")
+#table(freq.of.samples.per.samp.size=freq.of.sampsize)
+#cat("=== 56 camps with 1 elephant and 1 camp with 49 elephants)")
+
+samp.size <- rep(NA, nrow(cross_sectional))
+nm <- names(freq.of.sampsize)
+for (i in (1:length(freq.of.sampsize))) {
+  samp.size[campandnamecate==nm[i]] <- as.numeric(freq.of.sampsize[i]) ##### is het tellen wel goed gegaan?
+}
+#table(samp.size, campandnamecate)
+cross_sectional$samp.size <- samp.size
+rm(samp.size, freq.of.sampsize, i, nm)
+detach(cross_sectional)
+
+attach(cross_sectional)
+cat("\n=== Age y : frequencies and proportions ===")
+summary(age.y.)
+cat("\nStDev=", sd(age.y.))
+
+cat("\n=== sex : frequencies and proportions ===")
+table(sex)
+round(prop.table(table(sex)), 2)
+
+cat("\n=== Body condition score : frequencies and proportions ===")
+table(BCS)
+round(prop.table(table(BCS)), 2)
+
+cat("\n=== Age category : frequencies and proportions  ===")
+table(AgeCat)
+round(prop.table(table(AgeCat)), 2)
+
+cat("\n=== workperiod h : frequencies and proportions  ===")
+table(workperiod.h.)
+round(prop.table(table(workperiod.h.)), 2)
+
+cat("\n=== feedtype : frequencies and proportions  ===")
+table(feedtype)
+round(prop.table(table(feedtype)), 2)
+
+cat("\n=== management system : frequencies and proportions  ===")
+table(in.extensive)
+round(prop.table(table(in.extensive)), 2)
+
+cat("\n=== camp size : frequencies and proportions  ===")
+table(campsize)
+cat("\n   Grouped in camp size categories")
+round(prop.table(table(cut(campsize, c(0, 9, 30, 50, 100)))), 2)
+
+cat("\n=== region : frequencies and proportions  ===")
+table(region)
+round(prop.table(table(region)), 2)
+
+cat("\n=== province : frequencies and proportions  ===")
+table(province)
+round(prop.table(table(province)), 2)
+
+detach(cross_sectional)
+```
+
+
+# Correlation between tests (pearson's correlation)
+
+```{r correlation, echo=FALSE}
+attach(cross_sectional)
+round(cor(cross_sectional[,c(13:17)]), 3)
+pairs(cross_sectional[,c(13:17)])
+detach(cross_sectional)
+```
+
+
+# LCA with Dependent Mixture Models
+
+Predicting TB-state for each elephant based on 4 tests assuming 3 states (positive, inconclusive and negative).
+
+see https://maksimrudnev.com/2016/12/28/latent-class-analysis-in-r/#depmixS4
+
+```{r LCA,echo=FALSE}
+#install.packages("depmixS4")
+library(depmixS4)
+# ALL 5 tests, but 3 classes
+#model_definition <- mix(list(EC ~ 1, ESAT6 ~ 1, CFP10 ~ 1, MPB83 ~ 1, RT ~1), family = list(gaussian(), #For every corresponding 
+# gaussian(),  #  indicator a family of distribution 
+# gaussian(),  #  indicator a family of distribution 
+# gaussian(),  #  indicator a family of distribution 
+# multinomial("identity")), # should be indicated in the list.
+# data = cross_sectional,
+# nstates = 3, #This is the number of classes
+# nstart=c(0.9, 0.1), # Prior probabilities of classes
+# initdata = cross_sectional #Our data
+#)
+
+# we decided to leave out EC-test
+model_definition <- mix(list(ESAT6 ~ 1, CFP10 ~ 1, MPB83 ~ 1, RT ~1), family = list(gaussian(), #For every corresponding 
+ gaussian(),  #  indicator a family of distribution 
+ gaussian(),  #  indicator a family of distribution 
+ multinomial("identity")), # should be indicated in the list.
+ data = cross_sectional,
+ nstates = 3, #This is the number of classes
+ nstart=c(0.9, 0.1), # Prior probabilities of classes
+ initdata = cross_sectional #Our data
+)
+set.seed(123456)
+fit.mod <- fit(model_definition)   # Fit the model
+cat("\n=== LCA model results:")
+fit.mod
+summary(fit.mod)
+cat("\n About 17% is positive (pr1), 49% inconclusive (pr2) and 34% undetectable/negative (pr3)")
+cat("\n For each state (St#) the mean (.Intercept) and stdev (.sd) is given for each of 4 tests and the proportion in RT")
+#str(fit.mod)
+# fit.mod@posterior$state
+rm(model_definition)
+```
+
+# Crosstables of each factor with predicted TB-state (LCA model)
+
+```{r crosstables,echo=FALSE}
+
+cross_sectional$LCA.state <- fit.mod@posterior$state
+rm(fit.mod)
+
+cat("\n=== mean and stdev of EC per predicted TB-category:")
+cat("mean:", tapply(cross_sectional$EC, cross_sectional$LCA.state, mean))
+cat("StDev:", tapply(cross_sectional$EC, cross_sectional$LCA.state, sd))
+
+attach(cross_sectional)
+
+cat("\n=== Prevalence estimate based on LCA with all 5 tests:")
+cat("\nExplanation predicted state:  1 = positive, 2 = inconclusive, 3 = negative")
+table(predicted.state = LCA.state)
+round(prop.table(table(predicted.state = LCA.state)), 3)
+
+cat("\n=== Association between TB state and sex : frequencies and proportions ===")
+cbind(table(sex = sex, predicted.state = LCA.state) , round(prop.table(table(sex = sex, predicted.state = LCA.state), 1), 2))
+
+cat("\n=== Association between TB state and Body condition score : frequencies and proportions ===")
+cbind(table(BCS = BCS, predicted.state = LCA.state) , round(prop.table(table(BCS = BCS, predicted.state = LCA.state), 1), 2))
+cat("\nCollapse BCS: 1 + 2 versus 3 + 4 + 5")
+
+cat("\n=== Association between TB state and Age category : frequencies and proportions  ===")
+cbind(table(AgeCat = AgeCat, predicted.state = LCA.state) , round(prop.table(table(AgeCat = AgeCat, predicted.state = LCA.state), 1), 2))
+cat("\nCollapse AgeCat: 0-10 , 11-50 versus >50")
+
+cat("\n=== Association between TB state and workperiod h : frequencies and proportions  ===")
+cbind(table(workperiod.h. = workperiod.h., predicted.state = LCA.state) , round(prop.table(table(workperiod.h. = workperiod.h., predicted.state = LCA.state), 1), 2))
+cat("\nCollapse workperiod.h: 0-3 versus 7")
+
+cat("\n=== Association between TB state and feedtype : frequencies and proportions  ===")
+cbind(table(feedtype = feedtype, predicted.state = LCA.state) , round(prop.table(table(feedtype = feedtype, predicted.state = LCA.state), 1), 2))
+
+cat("\n=== Association between TB state and management system : frequencies and proportions  ===")
+cbind(table(in.extensive = in.extensive, predicted.state = LCA.state) , round(prop.table(table(in.extensive = in.extensive, predicted.state = LCA.state), 1), 2))
+
+cat("\n=== Association between TB state and camp size : frequencies and proportions  ===")
+cbind(table(camp.size = cut(campsize, c(0, 9, 30, 50, 100)), predicted.state = LCA.state), round(prop.table(table(samp.size = cut(campsize, c(0, 9, 30, 50, 100)), predicted.state = LCA.state), 1), 2))
+
+cat("\n=== Association between TB state and region : frequencies and proportions  ===")
+cbind(table(region = region, predicted.state = LCA.state), round(prop.table(table(region = region, predicted.state = LCA.state), 1), 2))
+cat("\nCollapse region: central + east + north/east")
+
+cat("\n=== Association between TB state and province : frequencies and proportions  ===")
+cbind(table(province = province, predicted.state = LCA.state) , round(prop.table(table(province = province, predicted.state = LCA.state), 1), 2))
+
+detach(cross_sectional)
+```
+
+# Univariable Logistic regression models of each factor with predicted TB-state
+
+```{r uvLogRegr,echo=FALSE}
+cat("=== Several factors are recoded as proposed above")
+cross_sectional$BCS123 <- cut(cross_sectional$BCS, c(0,2,3,5))
+cross_sectional$AgeCat123 <- cut(cross_sectional$age.y., c(0, 10, 50, 100))
+cross_sectional$region1 <- as.character(cross_sectional$region)
+cross_sectional$region1[cross_sectional$region == "central" | cross_sectional$region == "east" | cross_sectional$region == "north/east"] <- "C.E.N/E"
+cross_sectional$region1 <- factor(cross_sectional$region1)
+cross_sectional$feedtype <- factor(cross_sectional$feedtype)
+
+attach(cross_sectional)
+cat("\n\n====== Multicolinearity: association between factors ? =========")
+cat("\n=== Association between Region and feed type : frequencies and proportions  ===")
+cbind(table(Region = region1, feedtype = feedtype) , round(prop.table(table(Region = region1, feedtype = feedtype), 1), 2))
+
+cat("\n=== Association between Region and working period : frequencies and proportions  ===")
+cbind(table(Region = region1, workperiod.h. = workperiod.h.) , round(prop.table(table(Region = region1, workperiod.h. = workperiod.h.), 1), 2))
+
+cat("\n=== Association between Region and working period : frequencies and proportions  ===")
+cbind(table(Region = region1, BCS = BCS123) , round(prop.table(table(Region = region1, BCS = BCS123), 1), 2))
+
+cat("\n=== Association between Region and management system : frequencies and proportions  ===")
+cbind(table(Region = region1, in.extensive = in.extensive) , round(prop.table(table(Region = region1, in.extensive = in.extensive), 1), 2))
+
+cat("\n=== Association between feed type and management system : frequencies and proportions  ===")
+cbind(table(feedtype = feedtype, in.extensive = in.extensive) , round(prop.table(table(feedtype = feedtype, in.extensive = in.extensive), 1), 2))
+
+cat("\n ========== Estimation of strength of Association ========\n")
+cat("\n=== Association between TB state and sex : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ factor(sex), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and Body Condtion Score : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ relevel(BCS123, ref="(2,3]"), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and Age Category : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ relevel(AgeCat123, ref="(10,50]"), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and Working hours : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ cut(workperiod.h., c(-1, 6, 7)), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and feedtype : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ relevel(feedtype, ref="3"), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and management system : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ in.extensive, family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and Camp size : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ cut(campsize, c(0, 9, 30, 50, 100)), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+cat("\n=== Association between TB state and region : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ relevel(region1, ref="north"), family= "binomial")
+summary(fit)
+drop1(fit, test="Chisq")
+cat("\n=== OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+detach(cross_sectional)
+```
+
+# Multivariable Logistic regression models of ALL factors with predicted TB-state
+
+Remove a factor when AIC is within 2 points lower or higher than the NULL- model (reference model)
+```{r mvLogRegr,echo=FALSE}
+cat("\n=== Association between TB state and ALL variables : OR and 95% Confidence Interval ===")
+fit <- glm(I(LCA.state==1) ~ factor(sex) + relevel(BCS123, ref="(2,3]") + relevel(AgeCat123, ref="(10,50]") + cut(workperiod.h., c(-1, 6, 7)) + relevel(feedtype, ref="3") + in.extensive + cut(campsize, c(0, 9, 30, 50, 100)) + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove feed type ===")
+fit <- glm(I(LCA.state==1) ~ factor(sex) + relevel(BCS123, ref="(2,3]") + relevel(AgeCat123, ref="(10,50]") + cut(workperiod.h., c(-1, 6, 7)) + in.extensive + cut(campsize, c(0, 9, 30, 50, 100)) + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove BCS123 ===")
+fit <- glm(I(LCA.state==1) ~ factor(sex) + relevel(AgeCat123, ref="(10,50]") + cut(workperiod.h., c(-1, 6, 7)) + in.extensive + cut(campsize, c(0, 9, 30, 50, 100)) + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove sex ===")
+fit <- glm(I(LCA.state==1) ~ relevel(AgeCat123, ref="(10,50]") + cut(workperiod.h., c(-1, 6, 7)) + in.extensive + cut(campsize, c(0, 9, 30, 50, 100)) + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove in.extensive ===")
+fit <- glm(I(LCA.state==1) ~ relevel(AgeCat123, ref="(10,50]") + cut(workperiod.h., c(-1, 6, 7)) + cut(campsize, c(0, 9, 30, 50, 100)) + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove workperiod.h. ===")
+fit <- glm(I(LCA.state==1) ~ relevel(AgeCat123, ref="(10,50]") + cut(campsize, c(0, 9, 30, 50, 100)) + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove camp.size ===")
+fit <- glm(I(LCA.state==1) ~ relevel(AgeCat123, ref="(10,50]") + relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+rm(fit)
+
+cat("\n=== Remove Age ===")
+fit <- glm(I(LCA.state==1) ~ relevel(region1, ref="north"), family= "binomial", data= cross_sectional)
+summary(fit)
+drop1(fit, test="Chisq")
+
+cat("\n=== Final model : OR and 95% Confidence Interval ===")
+round(exp(cbind(ExpB = coef(fit), confint(fit))), 3)
+rm(fit)
+
+```
+
+
+# ROC curves based on LCA with 4 tests (excluding EC)
+
+Receiver Operation curves (ROC) to estimate the cutoff value, sensitivity and specificity for each test based on the predicted TB-state using the LCA-method.
+
+We decided to leave out EC-test in LCA model as this is the combination of ESAT6 and CFP10
+
+Disadvantage in this paragraph: Each test result is used for the predicted TB-state (LCA) and the prediction of the TB-state using cutoff value which is also based on LCA! 
+
+see for extra documentation: https://rviews.rstudio.com/2019/03/01/some-r-packages-for-roc-curves/
+
+
+In another paragraph another approach was used to run a LCA-model with 3 tests and estimate the cutoff value for the 4th test.
+
+
+In this part *true* positive or negative is based on LCA model
+
+
+```{r ROC, echo=FALSE, fig.height=4, fig.width=3}
+
+cross_sectional$TB.label <- ifelse(cross_sectional$LCA.state==1, "positive", "negative")
+table(TB.state = cross_sectional$TB.label)
+
+library(ROCR)
+
+cat("\n\n=============== ROC for test: ESAT6 ===================\n\n")
+pred <- prediction(cross_sectional$ESAT6, cross_sectional$TB.label)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : ESAT6")
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/106 + pred@tn[[1]]/602 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for ESAT6")
+cat("    More peaked is better")
+plot(max.se.sp, main= "ESAT6")
+
+cat("\n === List cutoff values, sensitivity and specificity for ESAT6 around the optimum")
+cbind(cutoff.ESAT6 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 4) , prop.true.negative = round(pred@tn[[1]]/602, 4), sum.se.sp = round(pred@tp[[1]]/106 + pred@tn[[1]]/602, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA versus TB-state based on cutoff")
+ESAT6.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", ESAT6.cutoff)
+tab <- table(cutoff.TB.state = ifelse(cross_sectional$ESAT6 > pred@cutoffs[[1]][ind], "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n=============== ROC for test: CFP10 ===================\n\n")
+pred <- prediction(cross_sectional$CFP10, cross_sectional$TB.label)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : CFP10")
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/106 + pred@tn[[1]]/602 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for CFP10")
+cat("    More peaked is better")
+plot(max.se.sp, main= "CFP10")
+
+cat("\n === List cutoff values, sensitivity and specificity for CFP10 around the optimum")
+cbind(cutoff.CFP10 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 4) , prop.true.negative = round(pred@tn[[1]]/602, 4), sum.se.sp = round(pred@tp[[1]]/106 + pred@tn[[1]]/602, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA versus TB-state based on cutoff")
+CFP10.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", CFP10.cutoff)
+tab <- table(cutoff.TB.state = ifelse(cross_sectional$CFP10 > pred@cutoffs[[1]][ind], "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n=============== ROC for test: MPB83 ===================\n\n")
+pred <- prediction(cross_sectional$MPB83, cross_sectional$TB.label)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : MPB83")
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/106 + pred@tn[[1]]/602 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for MPB83")
+cat("    More peaked is better")
+plot(max.se.sp, main= "MPB83")
+
+cat("\n === List cutoff values, sensitivity and specificity for MPB83 around the optimum")
+cbind(cutoff.MPB83 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 4) , prop.true.negative = round(pred@tn[[1]]/602, 4), sum.se.sp = round(pred@tp[[1]]/106 + pred@tn[[1]]/106, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA versus TB-state based on cutoff")
+MPB83.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", MPB83.cutoff)
+tab <- table(cutoff.TB.state = ifelse(cross_sectional$MPB83 > pred@cutoffs[[1]][ind], "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+cat("\n\n=============== ROC for test: EC ===================\n\n")
+pred <- prediction(cross_sectional$EC, cross_sectional$TB.label)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : EC")
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/92, 2) , prop.true.negative = round(pred@tn[[1]]/616, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/92, 2) , prop.true.negative = round(pred@tn[[1]]/616, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/106 + pred@tn[[1]]/602 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for EC")
+cat("    More peaked is better")
+plot(max.se.sp, main= "EC")
+
+cat("\n === List cutoff values, sensitivity and specificity for EC around the optimum")
+cbind(cutoff.EC = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 4) , prop.true.negative = round(pred@tn[[1]]/602, 4), sum.se.sp = round(pred@tp[[1]]/106 + pred@tn[[1]]/602, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA versus TB-state based on cutoff")
+EC.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", EC.cutoff)
+tab <- table(cutoff.TB.state = ifelse(cross_sectional$EC > pred@cutoffs[[1]][ind], "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+cat("\n\n=============== test: RT ===================\n\n")
+cat("Cross table of TB-state based on LCA versus RT-value")
+tab <- table(RT.test = cross_sectional$RT, LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm(tab)
+
+attach(cross_sectional)
+cat("=== Frequency of elephants of a certain number of positive test based on cutoffs (EXCEPT EC)")
+f <- I(ESAT6 > ESAT6.cutoff) + I(CFP10 > CFP10.cutoff) + I(MPB83 > MPB83.cutoff) + RT
+cat("\nCross table of number of positive tests per predicted TB-state (LCA.state)")
+table(Number.of.positive.tests = f, LCA.state)
+cat("\nProportion number of positive tests within predicted TB-state")
+round(prop.table(table(Number.of.positive.tests = f, LCA.state), 2), 3)
+
+cat("=== Frequency of elephants of a certain number of positive test based on cutoffs (INCLUDING EC)")
+f <- I(EC > EC.cutoff) + I(ESAT6 > ESAT6.cutoff) + I(CFP10 > CFP10.cutoff) + I(MPB83 > MPB83.cutoff) + RT
+cat("\nCross table of number of positive tests per predicted TB-state (LCA.state)")
+table(Number.of.positive.tests = f, LCA.state)
+cat("\nProportion number of positive tests within predicted TB-state")
+round(prop.table(table(Number.of.positive.tests = f, LCA.state), 2), 3)
+
+detach(cross_sectional)
+rm(f, EC.cutoff, ESAT6.cutoff, CFP10.cutoff, MPB83.cutoff)
+```
+
+# LCA model with 3 ELSA-tests and RT
+
+```{r ROC2, echo=FALSE}
+
+cat("\n=== LCA without ESAT6 ===")
+model_definition <- mix(list(CFP10 ~ 1, MPB83 ~ 1, RT ~1), family = list(gaussian(), #For every corresponding 
+  gaussian(),  #  indicator a family of distribution 
+ multinomial("identity")), # should be indicated in the list.
+ data = cross_sectional,
+ nstates = 3, #This is the number of classes
+ nstart=c(0.9, 0.1), # Prior probabilities of classes
+ initdata = cross_sectional #Our data
+)
+set.seed(123456)
+fit.mod <- fit(model_definition)   # Fit the model
+cat("\n=== LCA model results:")
+fit.mod
+summary(fit.mod)
+cat("\n About 19% is positive (pr1), 42% inconclusive (pr2) and 39% undetectable/negative (pr3)")
+cat("\n For each state (St#) the mean (.Intercept) and stdev (.sd) is given for each of 3 tests and the proportion in RT")
+cross_sectional$LCA.state_ESAT6 <- fit.mod@posterior$state
+cross_sectional$TB.label_ESAT6 <- ifelse(cross_sectional$LCA.state_ESAT6==1, "positive", "negative")
+table(TB.state.without.ESAT6 = cross_sectional$LCA.state_ESAT6)
+rm(model_definition)
+
+cat("\n=== LCA without CFP10 ===")
+model_definition <- mix(list(ESAT6 ~ 1, MPB83 ~ 1, RT ~1), family = list(gaussian(), #For every corresponding 
+  gaussian(),  #  indicator a family of distribution 
+ multinomial("identity")), # should be indicated in the list.
+ data = cross_sectional,
+ nstates = 3, #This is the number of classes
+ nstart=c(0.9, 0.1), # Prior probabilities of classes
+ initdata = cross_sectional #Our data
+)
+set.seed(123456)
+fit.mod <- fit(model_definition)   # Fit the model
+cat("\n=== LCA model results:")
+fit.mod
+summary(fit.mod)
+cat("\n About 26% is positive (pr1), 40% inconclusive (pr2) and 34% undetectable/negative (pr3)")
+cat("\n For each state (St#) the mean (.Intercept) and stdev (.sd) is given for each of 3 tests and the proportion in RT")
+cross_sectional$LCA.state_CFP10 <- fit.mod@posterior$state
+cross_sectional$TB.label_CFP10 <- ifelse(cross_sectional$LCA.state_CFP10==1, "positive", "negative")
+table(TB.state.without.CFP10 = cross_sectional$LCA.state_CFP10)
+rm(model_definition)
+
+
+cat("\n=== LCA without MPB83 ===")
+model_definition <- mix(list(CFP10 ~ 1, CFP10 ~ 1, RT ~1), family = list(gaussian(), #For every corresponding 
+  gaussian(),  #  indicator a family of distribution 
+ multinomial("identity")), # should be indicated in the list.
+ data = cross_sectional,
+ nstates = 3, #This is the number of classes
+ nstart=c(0.9, 0.1), # Prior probabilities of classes
+ initdata = cross_sectional #Our data
+)
+set.seed(123456)
+fit.mod <- fit(model_definition)   # Fit the model
+cat("\n=== LCA model results:")
+fit.mod
+summary(fit.mod)
+cat("\n About 14% is positive (pr1), 32% inconclusive (pr2) and 55% undetectable/negative (pr3)")
+cat("\n For each state (St#) the mean (.Intercept) and stdev (.sd) is given for each of 3 tests and the proportion in RT")
+cross_sectional$LCA.state_MPB83 <- fit.mod@posterior$state
+cross_sectional$TB.label_MPB83 <- ifelse(cross_sectional$LCA.state_MPB83==1, "positive", "negative")
+table(TB.state.without.MPB83 = cross_sectional$LCA.state_MPB83)
+rm(model_definition)
+```
+
+# ROC curves based on LCA with 3 tests determining cutoff values based for the *4th* test 
+
+```{r ROC3, echo=FALSE}
+
+cat("\n\n=============== ROC for test: ESAT6 given LCA =1 positive ===================\n\n")
+table(TB.state.without.ESAT6 = cross_sectional$TB.label_ESAT6)
+pred <- prediction(cross_sectional$ESAT6, cross_sectional$TB.label_ESAT6)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : ESAT6")
+# table(cross_sectional$TB.label_ESAT6)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/117, 2) , prop.true.negative = round(pred@tn[[1]]/591, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/117, 2) , prop.true.negative = round(pred@tn[[1]]/591, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/117 + pred@tn[[1]]/591 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for ESAT6")
+cat("    More peaked is better")
+plot(max.se.sp, main= "ESAT6")
+
+cat("\n === List cutoff values, sensitivity and specificity for ESAT6 around the optimum")
+cbind(cutoff.ESAT6 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/117, 4) , prop.true.negative = round(pred@tn[[1]]/591, 4), sum.se.sp = round(pred@tp[[1]]/117 + pred@tn[[1]]/591, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT ESAT6 versus TB-state based on cutoff")
+ESAT6_1.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", ESAT6_1.cutoff)
+tab <- table(cutoff.TB.state_ESAT6 = ifelse(cross_sectional$ESAT6 > ESAT6_1.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state_ESAT6)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n======== ROC for test: ESAT6 given LCA =1 positive + 2 inconclusive =============\n\n")
+
+cross_sectional$TB.label_ESAT6.2 <- ifelse(cross_sectional$LCA.state_ESAT6==3, "negative", "positive")
+table(TB.state.without.ESAt6 = cross_sectional$TB.label_ESAT6.2)
+
+pred <- prediction(cross_sectional$ESAT6, cross_sectional$TB.label_ESAT6.2)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : ESAT6")
+# table(cross_sectional$TB.label_ESAT6.2)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/418, 2) , prop.true.negative = round(pred@tn[[1]]/290, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/418, 2) , prop.true.negative = round(pred@tn[[1]]/290, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/418 + pred@tn[[1]]/290 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for ESAT6")
+cat("    More peaked is better")
+plot(max.se.sp, main= "ESAT6")
+
+cat("\n === List cutoff values, sensitivity and specificity for ESAT6 around the optimum")
+cbind(cutoff.ESAT6 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/418, 4) , prop.true.negative = round(pred@tn[[1]]/290, 4), sum.se.sp = round(pred@tp[[1]]/418 + pred@tn[[1]]/290, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT ESAT6 versus TB-state based on cutoff")
+ESAT6_2.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", ESAT6_2.cutoff)
+tab <- table(cutoff.TB.state_ESAT6 = ifelse(cross_sectional$ESAT6 > ESAT6_2.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state_ESAT6)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n========= ROC for test: CFP10 given LCA =1 positive ============\n\n")
+table(TB.state.without.CFP10 = cross_sectional$TB.label_CFP10)
+pred <- prediction(cross_sectional$CFP10, cross_sectional$TB.label_CFP10)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : CFP10")
+# table(cross_sectional$TB.label_CFP10)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/156, 2) , prop.true.negative = round(pred@tn[[1]]/552, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/156, 2) , prop.true.negative = round(pred@tn[[1]]/552, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/156 + pred@tn[[1]]/552 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for ESAT6")
+cat("    More peaked is better")
+plot(max.se.sp, main= "CFP10")
+
+cat("\n === List cutoff values, sensitivity and specificity for CFP10 around the optimum")
+cbind(cutoff.CFP10 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/156, 4) , prop.true.negative = round(pred@tn[[1]]/552, 4), sum.se.sp = round(pred@tp[[1]]/156 + pred@tn[[1]]/552, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT CFP10 versus TB-state based on cutoff")
+CFP10_1.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", CFP10_1.cutoff)
+tab <- table(cutoff.TB.state_CFP10 = ifelse(cross_sectional$CFP10 > CFP10_1.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state_CFP10)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n==== ROC for test: CFP10 given LCA =1 positive + 2 inconclusive =======\n\n")
+
+cross_sectional$TB.label_CFP10.2 <- ifelse(cross_sectional$LCA.state_CFP10==3, "negative", "positive")
+table(TB.state.without.CFP10 = cross_sectional$TB.label_CFP10.2)
+
+pred <- prediction(cross_sectional$CFP10, cross_sectional$TB.label_CFP10.2)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : CFP10")
+# table(cross_sectional$TB.label_CFP10.2)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/430, 2) , prop.true.negative = round(pred@tn[[1]]/278, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/430, 2) , prop.true.negative = round(pred@tn[[1]]/278, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/430 + pred@tn[[1]]/278 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for CFP10")
+cat("    More peaked is better")
+plot(max.se.sp, main= "CFP10")
+
+cat("\n === List cutoff values, sensitivity and specificity for CFP10 around the optimum")
+cbind(cutoff.CFP10 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/430, 4) , prop.true.negative = round(pred@tn[[1]]/278, 4), sum.se.sp = round(pred@tp[[1]]/430 + pred@tn[[1]]/278, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT CFP10 versus TB-state based on cutoff")
+CFP10_2.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", CFP10_2.cutoff)
+tab <- table(cutoff.TB.state_CFP10 = ifelse(cross_sectional$CFP10 > CFP10_2.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state_CFP10)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n======= ROC for test: MPB83 given LCA =1 positive ===========\n\n")
+table(TB.state.without.MPB83 = cross_sectional$TB.label_MPB83)
+pred <- prediction(cross_sectional$MPB83, cross_sectional$TB.label_MPB83)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : MPB83")
+# table(cross_sectional$TB.label_MPB83)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/92, 2) , prop.true.negative = round(pred@tn[[1]]/616, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/92, 2) , prop.true.negative = round(pred@tn[[1]]/616, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/92 + pred@tn[[1]]/616 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for ESAT6")
+cat("    More peaked is better")
+plot(max.se.sp, main= "MPB83")
+
+cat("\n === List cutoff values, sensitivity and specificity for MPB83 around the optimum")
+cbind(cutoff.CFP10 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/92, 4) , prop.true.negative = round(pred@tn[[1]]/616, 4), sum.se.sp = round(pred@tp[[1]]/92 + pred@tn[[1]]/616, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT MPB83 versus TB-state based on cutoff")
+MPB83_1.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", MPB83_1.cutoff)
+tab <- table(cutoff.TB.state_MPB83 = ifelse(cross_sectional$MPB83 > MPB83_1.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state_MPB83)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+cat("\n\n=== ROC for test: MPB83 given LCA =1 positive + 2 inconclusive ====\n\n")
+
+cross_sectional$TB.label_MPB83.2 <- ifelse(cross_sectional$LCA.state_MPB83==3, "negative", "positive")
+table(TB.state.without.MPB83 = cross_sectional$TB.label_MPB83.2)
+
+pred <- prediction(cross_sectional$MPB83, cross_sectional$TB.label_MPB83.2)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : MPB83")
+# table(cross_sectional$TB.label_MPB83.2)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/319, 2) , prop.true.negative = round(pred@tn[[1]]/389, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/319, 2) , prop.true.negative = round(pred@tn[[1]]/389, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/319 + pred@tn[[1]]/389 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for ESAT6")
+cat("    More peaked is better")
+plot(max.se.sp, main= "MPB83")
+
+cat("\n === List cutoff values, sensitivity and specificity for MPB83 around the optimum")
+cbind(cutoff.CFP10 = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/319, 4) , prop.true.negative = round(pred@tn[[1]]/389, 4), sum.se.sp = round(pred@tp[[1]]/319 + pred@tn[[1]]/389, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT MPB83 versus TB-state based on cutoff")
+MPB83_2.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", MPB83_2.cutoff)
+tab <- table(cutoff.TB.state_MPB83.2 = ifelse(cross_sectional$MPB83 > MPB83_2.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state_MPB83)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+
+cat("\n\n======== ROC for test: EC given LCA =1 positive ==========\n\n")
+cat("\n\n====== Based on LCA WITH ESAT6, CFP10, MPB83 and RT ==========\n\n")
+cross_sectional$TB.label_EC <- ifelse(cross_sectional$LCA.state==1, "positive", "negative")
+table(TB.state.without.EC = cross_sectional$TB.label_EC)
+
+pred <- prediction(cross_sectional$EC, cross_sectional$TB.label_EC)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : EC")
+# table(cross_sectional$TB.label_EC)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 2) , prop.true.negative = round(pred@tn[[1]]/602, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/106 + pred@tn[[1]]/602 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for EC")
+cat("    More peaked is better")
+plot(max.se.sp, main= "EC")
+
+cat("\n === List cutoff values, sensitivity and specificity for EC around the optimum")
+cbind(cutoff.EC = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/106, 4) , prop.true.negative = round(pred@tn[[1]]/602, 4), sum.se.sp = round(pred@tp[[1]]/106 + pred@tn[[1]]/602, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT EC versus TB-state based on cutoff")
+EC_1.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", EC_1.cutoff)
+tab <- table(cutoff.TB.state_EC = ifelse(cross_sectional$EC > EC_1.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+cat("\n\n==== ROC for test: EC given LCA =1 positive + 2 inconclusive =====\n\n")
+
+cross_sectional$TB.label_EC.2 <- ifelse(cross_sectional$LCA.state==3, "negative", "positive")
+table(TB.state.without.EC = cross_sectional$TB.label_EC.2)
+
+pred <- prediction(cross_sectional$EC, cross_sectional$TB.label_EC.2)
+perf <- performance(pred,"tpr","fpr")
+plot(perf, colorize=TRUE, main="Test : EC")
+# table(cross_sectional$TB.label_EC.2)
+# str(pred)
+#head(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/463 2) , prop.true.negative = round(pred@tn[[1]]/245, 2)),10)
+#tail(cbind(cutoff = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/463, 2) , prop.true.negative = round(pred@tn[[1]]/245, 2)),10)
+
+max.se.sp <- pred@tp[[1]]/463 + pred@tn[[1]]/245 # plot(max.se.sp)
+m <- max(max.se.sp)
+ind <- c(1:708)[max.se.sp == max(max.se.sp)]
+
+cat("\n\n=== Finding the maximum of sensitivity and specificity for EC")
+cat("    More peaked is better")
+plot(max.se.sp, main= "EC")
+
+cat("\n === List cutoff values, sensitivity and specificity for EC around the optimum")
+cbind(cutoff.EC = pred@cutoffs[[1]], prop.true.positive = round(pred@tp[[1]]/463, 4) , prop.true.negative = round(pred@tn[[1]]/245, 4), sum.se.sp = round(pred@tp[[1]]/463 + pred@tn[[1]]/245, 4))[(ind-15):(ind+15),]
+
+cat("Cross table of TB-state based on LCA WITHOUT EC versus TB-state based on cutoff")
+EC_2.cutoff <- pred@cutoffs[[1]][ind]
+cat("   Proposed cutoff: ", EC_2.cutoff)
+tab <- table(cutoff.TB.state_EC.2 = ifelse(cross_sectional$EC > EC_2.cutoff, "Pos", "Neg"), LCA.TB.state = cross_sectional$LCA.state)
+tab
+round(prop.table(tab, 2), 3)
+rm( max.se.sp, m, ind, pred, perf, tab)
+
+
+```
+
+# Density of test results
+
+```{r Test.Density, echo=FALSE, fig.height=4, fig.width=3}
+attach(cross_sectional)
+cat("\n=== RT-test : frequencies and proportions  ===")
+table(RT)
+round(prop.table(table(RT)), 2)
+binom.test(table(RT)[2], sum(table(RT)))
+
+cat("\n=== ESAT6-test : summary  ===")
+summary(ESAT6)
+plot(density(ESAT6))
+abline(v=c(ESAT6_1.cutoff, ESAT6_2.cutoff), lwd=1.5)
+
+cat("\n=== CFP10-test : summary  ===")
+summary(CFP10)
+plot(density(CFP10))
+abline(v=c(CFP10_1.cutoff, CFP10_2.cutoff), lwd=1.5)
+
+cat("\n=== MPB83-test : summary  ===")
+summary(MPB83)
+plot(density(MPB83))
+abline(v=c(MPB83_1.cutoff, MPB83_2.cutoff), lwd=1.5)
+
+cat("\n=== EC-test : summary  ===")
+summary(EC)
+plot(density(EC))
+abline(v=c(EC_1.cutoff, EC_2.cutoff), lwd=1.5)
+
+library(ggplot2)
+p <- ggplot(cross_sectional, aes(ESAT6)) + geom_histogram(binwidth = 2.5)
+p <- p + geom_vline(xintercept = c(ESAT6_1.cutoff, ESAT6_2.cutoff), linetype = "longdash")
+# p <- p + labs(title = "ELISA: ESAT6", size=25, tag = "A", x = "ELISA: ESAT6", y = "Frequency")
+p <- p + labs(size=25, tag = "A", x = "ELISA: ESAT6", y = "Frequency")
+p <- p + theme(axis.title = element_text(size = 12), axis.text = element_text(size = 12))
+p
+ggsave("hist_ESAT6.jpg", device="jpeg", height=4, width=3, dpi=600)
+rm(p)
+
+p <- ggplot(cross_sectional, aes(CFP10)) + geom_histogram(binwidth = 2.5)
+p <- p + geom_vline(xintercept = c(CFP10_1.cutoff, CFP10_2.cutoff), linetype = "longdash")
+# p <- p + labs(title = "ELISA: CFP10", size=25, tag = "B", x = "ELISA: CFP10", y = "Frequency")
+p <- p + labs(size=25, tag = "B", x = "ELISA: CFP10", y = "Frequency")
+p <- p + theme(axis.title = element_text(size = 12), axis.text = element_text(size = 12))
+p
+ggsave("hist_CFP10.jpg", device="jpeg", height=4, width=3, dpi=600)
+rm(p)
+
+p <- ggplot(cross_sectional, aes(MPB83)) + geom_histogram(binwidth = 2.5)
+p <- p + geom_vline(xintercept = c(MPB83_1.cutoff, MPB83_2.cutoff), linetype = "longdash")
+# p <- p + labs(title = "ELISA: MPB83", size=25, tag = "C", x = "ELISA: MPB83", y = "Frequency")
+p <- p + labs(size=25, tag = "C", x = "ELISA: MPB83", y = "Frequency")
+p <- p + theme(axis.title = element_text(size = 12), axis.text = element_text(size = 12))
+p
+ggsave("hist_MPB83.jpg", device="jpeg", height=4, width=3, dpi=600)
+rm(p)
+
+p <- ggplot(cross_sectional, aes(EC)) + geom_histogram(binwidth = 2.5)
+p <- p + geom_vline(xintercept = c(EC_1.cutoff, EC_2.cutoff))
+p <- p + scale_linetype_manual(values=c("twodash", "dotted"))
+# p <- p + labs(title = "ELISA: EC", size=25, tag = "D", x = "ELISA: EC", y = "Frequency")
+p <- p + labs(size=25, tag = "D", x = "ELISA: EC", y = "Frequency")
+p <- p + theme(axis.title = element_text(size = 12), axis.text = element_text(size = 12))
+p
+ggsave("hist_EC.jpg", device="jpeg", height=4, width=3, dpi=600)
+rm(p)
+detach(cross_sectional)
+rm(EC_1.cutoff, EC_2.cutoff, ESAT6_1.cutoff, ESAT6_2.cutoff, CFP10_1.cutoff, CFP10_2.cutoff, MPB83_1.cutoff, MPB83_2.cutoff)
+
+```
+
+
+# GIS map: spatial distribution of elephants
+
+```{r spatialGIS, echo=FALSE}
+#install.packages("RgoogleMaps")
+library(RgoogleMaps)
+#library(rgdal)
+#library(sp)
+#library(maptools)
+
+#options(device = "RStudioGD")
+
+attach(cross_sectional)
+lat <- NorthDD
+lon <- EastDD
+center <- c(mean(lat, na.rm=TRUE)-1, mean(lon, na.rm=TRUE)+1.5)
+zoom <- min(MaxZoom(range(lat, na.rm=TRUE), range(lon, na.rm=TRUE)))
+MyMap <- GetMap(center=center, zoom=zoom, destfile = "MyTile1.png")
+PlotOnStaticMap(MyMap, lat = NorthDD, lon = EastDD, cex = 1, pch = 19, col = "red", FUN = points, add = F)  
+# add LCA.state positive marker
+PlotOnStaticMap(MyMap, lat = NorthDD[LCA.state==1], lon = EastDD[LCA.state==1], cex = 0.5, pch = 19, col = "black", FUN = points, add = T)  
+# save in jpeg file
+jpeg("TBmap.jpg", width = 480, height = 480)
+PlotOnStaticMap(MyMap, lat = NorthDD, lon = EastDD, cex = 1, pch = 19, col = "red", FUN = points, add = F)  
+# add LCA.state positive marker
+PlotOnStaticMap(MyMap, lat = NorthDD[LCA.state==1], lon = EastDD[LCA.state==1], cex = 0.5, pch = 19, col = "black", FUN = points, add = T)  
+dev.off()
+
+cat("=== Red spots are location of elephants \n    Black point is TB-positive elephant based on LCA-prediction")
+detach(cross_sectional)
+rm(lat, lon, center, zoom, MyMap)
+
+# using Openstreetmap
+# see: https://dominicroye.github.io/en/2018/accessing-openstreetmap-data-with-r/
+
+#library(ggmap)
+#library(dismo)
+#library(rgdal)
+#library(rgeos)
+#map <- gmap("Thailand")
+
+## see https://educationalresearchtechniques.com/2016/11/02/using-maps-in-ggplot2/
+# data("world.cities")
+#Thai_cities<-subset(world.cities, country.etc=="Thailand")
+#ggplot(Thai_cities,aes(long,lat))+borders("world","Thailand", fill="light blue",col="dark blue")+geom_point(aes(size=pop),col="dark red")
+
+# see https://stackoverflow.com/questions/26914616/r-how-to-add-border-countries-to-a-country-spatialpolygons-map
+# library(raster)
+#library(ggplot2)
+#vietnam  <- getData("GADM",country="Vietnam",level=2)
+#china    <- getData("GADM",country="China",level=0)
+#laos     <- getData("GADM",country="Laos",level=0)
+#cambodia <- getData("GADM",country="Cambodia",level=0)
+#thailand <- getData("GADM",country="Thailand",level=0)
+
+#ggplot(vietnam,aes(x=long,y=lat,group=group))+
+#  geom_polygon(aes(fill=id),color="grey30")+
+#  geom_polygon(data=china,fill="grey60",color="grey80")+
+#  geom_polygon(data=laos,fill="grey60",color="grey80")+
+#  geom_polygon(data=cambodia,fill="grey60",color="grey80")+
+#  geom_polygon(data=thailand,fill="grey60",color="grey80")+
+#  coord_map(xlim=c(-1,1)+bbox(vietnam)["x",],ylim=c(-1,1)+bbox(vietnam)["y",])+
+#  scale_fill_discrete(guide="none")+
+#  theme_bw()+theme(panel.grid=element_blank())
+```
+
+
+# References
+
+```{r SessionInfo, echo=FALSE}
+sessionInfo()
+citation()
+citation("depmixS4")
+citation("ROCR")
+```
