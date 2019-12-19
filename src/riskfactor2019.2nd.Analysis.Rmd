@@ -71,6 +71,7 @@ freq.of.sampsize <- table(campandnamecate)
 #table(freq.of.samples.per.samp.size=freq.of.sampsize)
 #cat("=== 56 camps with 1 elephant and 1 camp with 49 elephants)")
 
+# loop to obtain the sample size per camp
 samp.size <- rep(NA, nrow(cross_sectional))
 nm <- names(freq.of.sampsize)
 for (i in (1:length(freq.of.sampsize))) {
@@ -99,47 +100,13 @@ table.result <- function(x, y) {
 table.result(sex, "Sex")
 table.result(BCS, "Body Condition Score")
 table.result(AgeCat, "Age category")
+table.result(workperiod.h., "Working hours")
 table.result(in.extensive, "Management system")
+table.result(cut(campsize, c(0, 9, 30, 50, 100)), "Sampple size")
 table.result(region, "Region")
+table.result(province, "Province")
 #======================
 
-
-cat("\n=== sex : frequencies and proportions ===")
-table(sex)
-round(prop.table(table(sex)), 2)
-
-cat("\n=== Body condition score : frequencies and proportions ===")
-table(BCS)
-round(prop.table(table(BCS)), 2)
-
-cat("\n=== Age category : frequencies and proportions  ===")
-table(AgeCat)
-round(prop.table(table(AgeCat)), 2)
-
-cat("\n=== workperiod h : frequencies and proportions  ===")
-table(workperiod.h.)
-round(prop.table(table(workperiod.h.)), 2)
-
-cat("\n=== feedtype : frequencies and proportions  ===")
-table(feedtype)
-round(prop.table(table(feedtype)), 2)
-
-cat("\n=== management system : frequencies and proportions  ===")
-table(in.extensive)
-round(prop.table(table(in.extensive)), 2)
-
-cat("\n=== camp size : frequencies and proportions  ===")
-table(campsize)
-cat("\n   Grouped in camp size categories")
-round(prop.table(table(cut(campsize, c(0, 9, 30, 50, 100)))), 2)
-
-cat("\n=== region : frequencies and proportions  ===")
-table(region)
-round(prop.table(table(region)), 2)
-
-cat("\n=== province : frequencies and proportions  ===")
-table(province)
-round(prop.table(table(province)), 2)
 
 detach(cross_sectional)
 ```
