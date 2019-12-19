@@ -33,7 +33,7 @@ cat("\nRun date:", format(Sys.Date(), "%d %b %Y"))
 
 
 ```{r ReadData, echo=FALSE}
-crosssection803_20100813_2016May18 <- read.delim("../GISdata/crosssection803_20100813_2016May18.txt")
+crosssection803_20100813_2016May18 <- read.delim("./data/raw/crosssection803_20100813_2016May18.txt")
 
 # exclude longitudinal samples
 attach(crosssection803_20100813_2016May18)
@@ -85,6 +85,22 @@ attach(cross_sectional)
 cat("\n=== Age y : frequencies and proportions ===")
 summary(age.y.)
 cat("\nStDev=", sd(age.y.))
+
+#======= create funtion to tabulate =====
+table.result <- function(x, y) {
+  cat("\n=== ", y, " : frequencies and proportions ===")
+  tab <- table(x)
+  cat("\n === Frequencies for ", y, "\n")
+  print(tab)
+  cat("\n === Proportions for ", y, "\n")
+  print(round(prop.table(tab), 3))
+}
+#======================
+table.result(sex, "Sex")
+table.result(BCS, "Body Condition Score")
+table.result(AgeCat, "Age category")
+#======================
+
 
 cat("\n=== sex : frequencies and proportions ===")
 table(sex)
