@@ -99,6 +99,8 @@ table.result <- function(x, y) {
 table.result(sex, "Sex")
 table.result(BCS, "Body Condition Score")
 table.result(AgeCat, "Age category")
+table.result(in.extensive, "Management system")
+table.result(region, "Region")
 #======================
 
 
