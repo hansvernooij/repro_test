@@ -99,4 +99,9 @@ target/
 /data/processed
 /data/raw
 
+# niet voor versie beheer
+.Rhistory
+src/.RData
+src/.Rhistory
+
 .Rproj.user
